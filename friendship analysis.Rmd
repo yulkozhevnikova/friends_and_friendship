@@ -1,0 +1,330 @@
+---
+title: "friendship analysis"
+author: "Yulia Kozhevnikova"
+date: "02 05 2020"
+output: html_document
+---
+
+# parts of the code are from the book https://www.tidytextmining.com/ 
+
+Loading data and libraries
+```{r, message = FALSE, warning = FALSE}
+library(dplyr)
+library(magrittr)
+library(readxl)
+library(tidytext)
+library(quanteda)
+library(stylo)
+library(tidyr)
+postpost <- read_excel("postpostp.xlsx")
+soviet <- read_excel("sovietsoviet.xlsx")
+names <- read_excel("names.xlsx")
+
+```
+
+Pre-processing
+```{r}
+postpost$text <- paste(postpost$left, "", postpost$kwic, "", postpost$right)
+postpost = postpost %>% dplyr::select(book, text)
+
+
+soviet$text <- paste(soviet$left, "", soviet$kwic, "", soviet$right)
+soviet = soviet %>% dplyr::select(book, text)
+```
+
+Removing stop-words
+```{r, message = FALSE, warning = FALSE}
+?stopwords
+stopwords <- data.frame(words=stopwords("ru"), stringsAsFactors=FALSE)
+names(stopwords)[names(stopwords) == "words"] <- "word"
+my_stopwords <- tibble(word = c(as.character(), 
+                                    "c", "это", "который", "весь", "na", "свой"))
+
+post.long <- postpost %>%
+    unnest_tokens(word, text)
+post_clean = post.long %>% anti_join(stopwords)
+post_clean = post_clean %>% anti_join(names)
+post_clean = post_clean %>% anti_join(my_stopwords)
+
+
+sov.long <- soviet %>%
+    unnest_tokens(word, text)
+sov_clean = sov.long %>% anti_join(stopwords)
+sov_clean = sov_clean %>% anti_join(names)
+sov_clean = sov_clean %>% anti_join(my_stopwords)
+
+
+```
+
+
+```{r}
+
+post_clean %>% 
+  group_by(word) %>% 
+  count(sort = TRUE)
+
+sov_clean %>% 
+  group_by(word) %>% 
+  count(sort = TRUE)
+
+
+```
+
+Counting pairwise correlations
+```{r}
+library(widyr)
+
+corc_word_pairs <- post_clean %>% 
+  pairwise_count(word, book, sort = TRUE)
+
+corc_word_pairs
+
+corc_word_pairs_sov <- sov_clean %>% 
+  pairwise_count(word, book, sort = TRUE)
+
+corc_word_pairs_sov
+```
+
+Visualizing into networds 
+```{r, warning = FALSE, message = FALSE}
+library(ggplot2)
+library(igraph)
+library(ggraph)
+```
+
+```{r}
+set.seed(1234)
+corc_word_pairs %>%
+  filter(n >= 200) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "cyan4") +
+  geom_node_point(size = 3) +
+  geom_node_text(aes(label = name), repel = TRUE, 
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+```
+
+```{r}
+
+set.seed(1234)
+corc_word_pairs_sov %>%
+  filter(n >= 200) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "#BD6262") +
+  geom_node_point(size = 3) +
+  geom_node_text(aes(label = name), repel = TRUE, 
+                 point.padding = unit(0.2, "lines")) +
+  theme_void()
+```
+
+
+Looking at the words with highest correlation
+
+```{r}
+# we need to filter for at least relatively common words first
+word_cors <- post_clean %>%
+  group_by(word) %>%
+  filter(n() >= 20) %>%
+  pairwise_cor(word, book, sort = TRUE)
+
+word_cors
+
+
+word_cors %>%
+  filter(item1 %in% c("друг", "подруга", "дружба", "дружить")) %>%
+  group_by(item1) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free_y") +
+  coord_flip() +
+  theme_minimal() +
+  scale_fill_manual( values = c( "#a6cdd9", "#d2e4ee", "#b7b079", "#efc750" ) )
+
+ 
+```
+
+
+
+```{r}
+word_cors <- sov_clean %>%
+  group_by(word) %>%
+  filter(n() >= 20) %>%
+  pairwise_cor(word, book, sort = TRUE)
+
+word_cors
+
+word_cors %>%
+  filter(item1 %in% c("друг", "подруга", "дружба", "дружить")) %>%
+  group_by(item1) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free_y") +
+  coord_flip() +
+  theme_minimal()
+```
+
+
+N-gram analysis
+
+
+Counting bi-grams
+```{r}
+
+post_bigrams <- postpost %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+bigrams_separated <- post_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stopwords$word) %>%
+  filter(!word2 %in% stopwords$word)
+
+bigrams_filtered <- bigrams_filtered %>%
+  filter(!word1 %in% my_stopwords$word) %>%
+  filter(!word2 %in% my_stopwords$word)
+
+bigrams_filtered <- bigrams_filtered %>%
+  filter(!word1 %in% names$word) %>%
+  filter(!word2 %in% names$word)
+
+
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts
+
+```
+
+```{r}
+bi_fr = bigrams_filtered %>%
+filter(word1 == "дружба" | word1 == "дружить" | word1 == "друг" | word1 =="подруга"| word2 == "дружба" | word2 == "дружить" | word2 == "друг" | word2 =="подруга") %>%
+count(book, word1, word2, sort = TRUE)
+```
+
+```{r}
+bigram_counts <- bi_fr %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts
+```
+
+```{r}
+bigram_graph <- bigram_counts %>%
+  filter(n > 15) %>%
+  graph_from_data_frame()
+
+bigram_graph
+
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 4) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+
+N-gram network for Soviet period
+
+```{r}
+sov_bigrams <- soviet  %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+bigrams_separated_sov <- sov_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered_sov <- bigrams_separated_sov %>%
+  filter(!word1 %in% stopwords$word) %>%
+  filter(!word2 %in% stopwords$word)
+
+bigrams_filtered_sov <- bigrams_filtered_sov %>%
+  filter(!word1 %in% my_stopwords$word) %>%
+  filter(!word2 %in% my_stopwords$word)
+
+bigrams_filtered_sov <- bigrams_filtered_sov %>%
+  filter(!word1 %in% names$word) %>%
+  filter(!word2 %in% names$word)
+
+
+bigram_counts_sov <- bigrams_filtered_sov %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts_sov
+
+
+bi_fr_sov = bigrams_filtered_sov %>%
+filter(word1 == "дружба" | word1 == "дружить" | word1 == "друг" | word1 =="подруга"| word2 == "дружба" | word2 == "дружить" | word2 == "друг" | word2 =="подруга") %>%
+count(book, word1, word2, sort = TRUE)
+
+bigram_counts_sov <- bi_fr_sov %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_graph <- bigram_counts_sov %>%
+  filter(n > 15) %>%
+  graph_from_data_frame()
+
+bigram_graph
+
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 4) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+
+```
+
+
+Dynamics of frequencies of friendship-related words
+
+```{r}
+
+year_word_counts <- post_clean %>%
+extract(book, "year", "(\\d{4})", convert = TRUE)
+
+post_cl_year = cbind(year_word_counts, post_clean)
+post_cl_year = post_cl_year[ -4]
+
+post_cl_year_words = post_cl_year %>% filter(word == "дружба"|word == "дружить"|word == "друг"|word == "подруга")
+
+post_cl_year_words = post_cl_year_words %>% group_by (year) %>% count(word)
+
+ggplot()+
+  geom_bar(data = post_cl_year_words, aes(x = year, y = n, fill=word), stat = "identity") +
+  scale_y_continuous(name="frequency", limits=c(0, 2000))
+```
+
+
+```{r}
+year_word_counts_sov <- sov_clean %>%
+extract(book, "year", "(\\d{4})", convert = TRUE)
+
+sov_cl_year = cbind(year_word_counts_sov, sov_clean)
+sov_cl_year = sov_cl_year[ -4]
+
+sov_cl_year_words = sov_cl_year %>% filter(word == "дружба"|word == "дружить"|word == "друг"|word == "подруга")
+
+sov_cl_year_words = sov_cl_year_words %>% group_by (year) %>% count(word)
+
+ggplot()+
+  geom_bar(data = sov_cl_year_words, aes(x = year, y = n, fill=word), stat = "identity") +
+  scale_y_continuous(name="frequency", limits=c(0, 2000))
+```
+
+
+
